@@ -424,7 +424,6 @@ def index():
                         f"Falls etwas schiefgeht, bitte vorher auf dem Gerät verkleinern. "
                     )
 
-                # HEIC/HEIF explizit abweisen
                 filename_lower = uploaded.filename.lower()
                 if filename_lower.endswith(".heic") or filename_lower.endswith(".heif"):
                     raise RuntimeError(
@@ -471,7 +470,17 @@ def index():
                     data=data,
                     timeout=120
                 )
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.exceptions.HTTPError as http_err:
+                    # detaillierte API-Fehlermeldung anzeigen
+                    try:
+                        err = r.json()
+                        msg = err.get("error", {}).get("message") or str(err)
+                    except Exception:
+                        msg = r.text
+                    raise RuntimeError(f"API-Fehler (edits): {msg}") from http_err
+
                 data_json = r.json()
 
             # ===== WEITERARBEITEN MIT LETZTEM BILD =====
@@ -514,7 +523,16 @@ def index():
                     data=data,
                     timeout=120
                 )
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.exceptions.HTTPError as http_err:
+                    try:
+                        err = r.json()
+                        msg = err.get("error", {}).get("message") or str(err)
+                    except Exception:
+                        msg = r.text
+                    raise RuntimeError(f"API-Fehler (edits): {msg}") from http_err
+
                 data_json = r.json()
 
             # ===== NEUES BILD (OHNE UPLOAD) ERZEUGEN =====
@@ -532,7 +550,16 @@ def index():
                     data=json.dumps(body),
                     timeout=120
                 )
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.exceptions.HTTPError as http_err:
+                    try:
+                        err = r.json()
+                        msg = err.get("error", {}).get("message") or str(err)
+                    except Exception:
+                        msg = r.text
+                    raise RuntimeError(f"API-Fehler (generations): {msg}") from http_err
+
                 data_json = r.json()
 
             # ===== BILD EXTRAHIEREN =====
