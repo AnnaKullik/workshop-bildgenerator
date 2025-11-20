@@ -9,7 +9,7 @@ from flask import Flask, request, send_file, session
 from markupsafe import Markup
 from PIL import Image
 
-# Versuch, HEIC-Unterstützung zu aktivieren
+# (HEIC-Unterstützung vorbereitet, aktuell aber nicht genutzt)
 HEIF_AVAILABLE = False
 try:
     import pillow_heif
@@ -110,7 +110,7 @@ def build_pw_block(auth_ok: bool) -> str:
 
 
 # ==============================================
-#   HTML / CSS – MOBIL OPTIMIERT + großes Textfeld + großer Datei-Button
+#   HTML / CSS – MOBIL OPTIMIERT
 # ==============================================
 PAGE = """<!doctype html>
 <html lang="de">
@@ -300,7 +300,7 @@ img {
 
       <p class="hint">
         1) Passwort eingeben (nur beim Start oder nach Timeout) · 
-        2) Foto hochladen oder letztes Bild nutzen · 
+        2) JPG/PNG-Foto hochladen oder letztes Bild nutzen · 
         3) Prompt eingeben · 4) Bild erzeugen · 5) Download
       </p>
 
@@ -317,8 +317,8 @@ img {
           <option value="1024x1024">Quadrat 1024×1024</option>
         </select>
 
-        <label>Eigenes Ausgangsbild (optional)</label>
-        <input type="file" name="image" accept="image/*">
+        <label>Eigenes Ausgangsbild (optional, nur JPG/PNG)</label>
+        <input type="file" name="image" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
 
         <label style="margin-top:8px;">
           <input type="checkbox" name="use_last_image" value="1">
@@ -337,7 +337,7 @@ img {
 
     </div>
 
-    <p class="small">Lokal auf diesem Mac (oder Server). API-Key & Passwort aus Umgebungsvariablen.</p>
+    <p class="small">Lokal oder auf Server. Bitte nur JPG/PNG hochladen (keine HEIC-Dateien).</p>
   </div>
 </body>
 </html>"""
@@ -410,19 +410,29 @@ def index():
 
             allowed_sizes = ("1024x1024", "1536x1024", "1024x1536")
             data_json = None
+            info_msg = ""
 
             # ===== UPLOAD-BILD =====
             if uploaded and uploaded.filename:
                 img_bytes = uploaded.read()
 
-                # HEIC/HEIF erkennen und ggf. verständliche Fehlermeldung ausgeben
-                filename_lower = uploaded.filename.lower()
-                if (filename_lower.endswith(".heic") or filename_lower.endswith(".heif")) and not HEIF_AVAILABLE:
-                    raise RuntimeError(
-                        "HEIC/HEIF-Datei erkannt, aber HEIC-Unterstützung ist auf diesem System nicht aktiviert. "
-                        "Bitte die Datei vorher in JPG/PNG umwandeln oder einen Server mit HEIC-Unterstützung verwenden."
+                # Dateigröße prüfen
+                file_size_mb = len(img_bytes) / (1024 * 1024)
+                if file_size_mb > 10:
+                    info_msg += (
+                        f"Hinweis: Die hochgeladene Datei ist relativ groß (~{file_size_mb:.1f} MB). "
+                        f"Falls etwas schiefgeht, bitte vorher auf dem Gerät verkleinern. "
                     )
 
+                # HEIC/HEIF explizit abweisen
+                filename_lower = uploaded.filename.lower()
+                if filename_lower.endswith(".heic") or filename_lower.endswith(".heif"):
+                    raise RuntimeError(
+                        "HEIC/HEIF-Dateien werden aktuell nicht unterstützt. "
+                        "Bitte das Bild vorher als JPG oder PNG speichern und erneut hochladen."
+                    )
+
+                # Bild einlesen
                 try:
                     pil = Image.open(io.BytesIO(img_bytes))
                     w, h = pil.size
@@ -431,6 +441,7 @@ def index():
                     pil = None
                     ratio = 1
 
+                # Format-Ermittlung
                 if size_choice in ("match_upload", "auto"):
                     if 0.9 <= ratio <= 1.1:
                         size = "1024x1024"
@@ -441,6 +452,7 @@ def index():
                 else:
                     size = size_choice if size_choice in allowed_sizes else "1024x1024"
 
+                # Bild nach PNG normalisieren
                 try:
                     pil = pil.convert("RGBA")
                     buff = io.BytesIO()
@@ -454,12 +466,15 @@ def index():
 
                 r = requests.post(
                     "https://api.openai.com/v1/images/edits",
-                    headers=headers, files=files, data=data, timeout=120
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=120
                 )
                 r.raise_for_status()
                 data_json = r.json()
 
-            # ===== WEITERARBEITEN =====
+            # ===== WEITERARBEITEN MIT LETZTEM BILD =====
             elif use_last:
                 img_bytes = get_last_image_bytes()
 
@@ -494,12 +509,15 @@ def index():
 
                 r = requests.post(
                     "https://api.openai.com/v1/images/edits",
-                    headers=headers, files=files, data=data, timeout=120
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=120
                 )
                 r.raise_for_status()
                 data_json = r.json()
 
-            # ===== GENERATION =====
+            # ===== NEUES BILD (OHNE UPLOAD) ERZEUGEN =====
             else:
                 if size_choice in allowed_sizes or size_choice == "auto":
                     size = size_choice
@@ -536,7 +554,7 @@ def index():
             data_b64 = base64.b64encode(data_bytes).decode("utf-8")
             image_data_url = "data:image/png;base64," + data_b64
 
-            result_html = build_result_html(image_data_url, prompt)
+            result_html = build_result_html(image_data_url, prompt, message=info_msg)
 
         except Exception as e:
             esc = Markup.escape(str(e))
