@@ -9,7 +9,7 @@ from flask import Flask, request, send_file, session
 from markupsafe import Markup
 from PIL import Image
 
-# (HEIC-Unterstützung vorbereitet, aktuell aber nicht genutzt)
+# (HEIC-Unterstützung vorbereitet, aktuell aber nicht genutzt – wir erlauben bewusst nur JPG/PNG)
 HEIF_AVAILABLE = False
 try:
     import pillow_heif
@@ -97,12 +97,12 @@ def build_result_html(image_data_url, prompt, message=""):
 
 def build_pw_block(auth_ok: bool) -> str:
     """
-    Baut den HTML-Block für das Passwortfeld.
+    Passwortfeld:
     - Wenn eingeloggt: gar nichts anzeigen.
     - Wenn nicht eingeloggt oder Session abgelaufen: Feld mit Platzhalter anzeigen.
     """
     if auth_ok:
-        return ""  # Passwortfeld komplett ausblenden
+        return ""
     return """
       <label>Workshop-Passwort</label>
       <input name="pw" type="password" placeholder="Passwort eingeben" required>
@@ -110,7 +110,7 @@ def build_pw_block(auth_ok: bool) -> str:
 
 
 # ==============================================
-#   HTML / CSS – MOBIL OPTIMIERT
+#   HTML / CSS / JS – MOBIL OPTIMIERT + WARTEN-OVERLAY
 # ==============================================
 PAGE = """<!doctype html>
 <html lang="de">
@@ -252,6 +252,42 @@ img {
 
 .out { margin-top:24px; }
 
+/* —— Warten-Overlay —— */
+#loading-overlay {
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,0.4);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  z-index:9999;
+}
+
+#loading-overlay-inner {
+  background:#ffffff;
+  padding:20px 24px;
+  border-radius:16px;
+  box-shadow:0 8px 30px rgba(0,0,0,0.25);
+  max-width:260px;
+  text-align:center;
+  font-size:16px;
+  color:#333;
+}
+
+#loading-spinner {
+  width:32px;
+  height:32px;
+  border-radius:50%;
+  border:4px solid #ddd;
+  border-top-color:var(--accent);
+  margin:0 auto 12px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* —— Handy ——— */
 @media (max-width:720px) {
 
@@ -304,7 +340,7 @@ img {
         3) Prompt eingeben · 4) Bild erzeugen · 5) Download
       </p>
 
-      <form method="post" action="/" enctype="multipart/form-data">
+      <form id="main-form" method="post" action="/" enctype="multipart/form-data">
 
         {{PW_BLOCK}}
 
@@ -337,8 +373,36 @@ img {
 
     </div>
 
-    <p class="small">Lokal oder auf Server. Bitte nur JPG/PNG hochladen (keine HEIC-Dateien).</p>
+    <p class="small">Server-Variante des Bildgenerators. Bitte nur JPG/PNG hochladen (keine HEIC-Dateien).</p>
   </div>
+
+  <!-- Warten-Overlay -->
+  <div id="loading-overlay">
+    <div id="loading-overlay-inner">
+      <div id="loading-spinner"></div>
+      <div>Bild wird erzeugt …<br>Bitte einen Moment warten.</div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      var form = document.getElementById('main-form');
+      if (!form) return;
+
+      form.addEventListener('submit', function() {
+        // Buttons deaktivieren
+        var buttons = form.querySelectorAll('button');
+        buttons.forEach(function(b) { b.disabled = true; });
+
+        // Overlay einblenden
+        var overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+          overlay.style.display = 'flex';
+        }
+      });
+    })();
+  </script>
+
 </body>
 </html>"""
 
@@ -362,6 +426,9 @@ def render_page(result_html: str, prompt_value: str) -> str:
 # ==============================================
 app = Flask(__name__)
 app.secret_key = APP_SECRET
+
+# Upload-Limit: max. 20 MB pro Request (reicht für normale Handyfotos)
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -416,9 +483,9 @@ def index():
             if uploaded and uploaded.filename:
                 img_bytes = uploaded.read()
 
-                # Dateigröße prüfen
+                # Dateigröße prüfen (nur Info für dich / Teilnehmer)
                 file_size_mb = len(img_bytes) / (1024 * 1024)
-                if file_size_mb > 10:
+                if file_size_mb > 15:
                     info_msg += (
                         f"Hinweis: Die hochgeladene Datei ist relativ groß (~{file_size_mb:.1f} MB). "
                         f"Falls etwas schiefgeht, bitte vorher auf dem Gerät verkleinern. "
